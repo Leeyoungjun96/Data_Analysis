@@ -309,3 +309,201 @@ select month,
 	,sum(case when gubun='over_26' then user_cnt else 0 end) as "over_26"
 from temp_02 
 group by month order by 1;
+
+
+/************************************
+한달 기간중에 주간 방문 횟수별 사용자 건수
+*************************************/
+
+with
+temp_01 as (
+select user_id,
+	case when visit_date between '20160801' and '20160807' then '1st'
+		 when visit_date between '20160808' and '20160814' then '2nd'
+		 when visit_date between '20160815' and '20160821' then '3rd'
+		 when visit_date between '20160822' and '20160828' then '4th'
+		 when visit_date between '20160829' and '20160904' then '5th' end as week_gubun
+	, count(distinct visit_date) as daily_visit_cnt
+from ga_sess
+where visit_date between '20160801' and '20160831'
+group by user_id
+, case when visit_date between '20160801' and '20160807' then '1st'
+		 when visit_date between '20160808' and '20160814' then '2nd'
+		 when visit_date between '20160815' and '20160821' then '3rd'
+		 when visit_date between '20160822' and '20160828' then '4th'
+		 when visit_date between '20160829' and '20160904' then '5th' end
+)
+select daily_visit_cnt
+	, sum(case when week_gubun='1st' then 1 else 0 end) as week_1st_user_cnt
+	, sum(case when week_gubun='2nd' then 1 else 0 end) as week_2nd_user_cnt
+	, sum(case when week_gubun='3rd' then 1 else 0 end) as week_3rd_user_cnt
+	, sum(case when week_gubun='4th' then 1 else 0 end) as week_4th_user_cnt
+	, sum(case when week_gubun='5th' then 1 else 0 end) as week_5th_user_cnt
+from temp_01 group by daily_visit_cnt
+order by 1;
+
+-- 임시 테이블을 이용하여 동적으로 주간 기간 설정 - 한달 기간중에 주간 방문 횟수별 사용자 건수
+with
+temp_00(week_gubun, start_date, end_date) as
+(
+values
+('1st', '20160801', '20160807')
+,('2nd', '20160808', '20160814')
+,('3rd', '20160815', '20160821')
+,('4th', '20160822', '20160828')
+,('5th', '20160829', '20160904')
+),
+temp_01 as
+(
+select  a.user_id, b.week_gubun
+	, count(distinct visit_date) as daily_visit_cnt
+from ga_sess a
+	join temp_00 b on a.visit_date between b.start_date and end_date
+ --where a.visit_date between (select min(start_date) from temp_00) and (select max(end_date) from temp_00) -- 성능을 위해서
+group by a.user_id, b.week_gubun
+)
+select daily_visit_cnt
+	, sum(case when week_gubun='1st' then 1 else 0 end) as week_1st_user_cnt
+	, sum(case when week_gubun='2nd' then 1 else 0 end) as week_2nd_user_cnt
+	, sum(case when week_gubun='3rd' then 1 else 0 end) as week_3rd_user_cnt
+	, sum(case when week_gubun='4th' then 1 else 0 end) as week_4th_user_cnt
+	, sum(case when week_gubun='5th' then 1 else 0 end) as week_5th_user_cnt
+from temp_01 group by daily_visit_cnt
+order by 1;
+
+
+/************************************
+사용자가 첫 세션 접속 후 두번째 세션 접속까지 걸리는 평균, 최대, 최소, 4분위 percentile 시간 추출
+step 1: 사용자 별로 접속 시간에 따라 session 별 순서 매김.
+step 2: session 별 순서가 첫번째와 두번째 인것 추출
+step 3: 사용자 별로 첫번째 세션의 접속 이후 두번째 세션의 접속 시간 차이를 가져 오기
+step 4: step 3의 데이터를 전체 평균, 최대, 최소, 4분위 percentile 시간 구하기
+*************************************/
+
+-- 사용자 별로 접속 시간에 따라 session 별 순서 매김.
+select user_id, row_number() over (partition by user_id order by visit_stime) as session_rnum
+	, visit_stime
+	-- 추후에 1개 session만 있는 사용자는 제외하기 위해 사용.
+	, count(*) over (partition by user_id) as session_cnt
+from ga_sess order by user_id, session_rnum;
+
+--session 별 순서가 첫번째와 두번째 인것 추출하고 사용자 별로 첫번째 세션의 접속 이후 두번째 세션의 접속 시간 차이를 가져 오기
+with
+temp_01 as (
+	select user_id, row_number() over (partition by user_id order by visit_stime) as session_rnum
+	, visit_stime
+	-- 추후에 1개 session만 있는 사용자는 제외하기 위해 사용.
+	, count(*) over (partition by user_id) as session_cnt
+from ga_sess
+)
+select user_id
+	-- 사용자별로 첫번째 세션, 두번째 세션만 있으므로 max(visit_stime)이 두번째 세션 접속 시간, min(visit_stime)이 첫번째 세션 접속 시간.
+	, max(visit_stime) - min(visit_stime) as sess_time_diff
+from temp_01 where session_rnum <= 2 and session_cnt > 1 -- 첫번째 두번째 세션만 가져오되 첫번째 접속만 있는 사용자를 제외하기
+group by user_id;
+
+-- step 3의 데이터를 전체 평균, 최대값, 최소값, 4분위 percentile  구하기.
+with
+temp_01 as (
+	select user_id, row_number() over (partition by user_id order by visit_stime) as session_rnum
+		, visit_stime
+		-- 추후에 1개 session만 있는 사용자는 제외하기 위해 사용.
+		, count(*) over (partition by user_id) as session_cnt
+	from ga_sess
+),
+temp_02 as (
+	select user_id
+		-- 사용자별로 첫번째 세션, 두번째 세션만 있으므로 max(visit_stime)이 두번째 세션 접속 시간, min(visit_stime)이 첫번째 세션 접속 시간.
+		, max(visit_stime) - min(visit_stime) as sess_time_diff
+	from temp_01 where session_rnum <= 2 and session_cnt > 1
+	group by user_id
+)
+-- postgresql avg(time)은 interval이 제대로 고려되지 않음. justify_inteval()을 적용해야 함.
+select justify_interval(avg(sess_time_diff)) as avg_time
+    , max(sess_time_diff) as max_time, min(sess_time_diff) as min_time
+	, percentile_disc(0.25) within group (order by sess_time_diff) as percentile_1
+	, percentile_disc(0.5) within group (order by sess_time_diff)	as percentile_2
+	, percentile_disc(0.75) within group (order by sess_time_diff)	as percentile_3
+	, percentile_disc(1.0) within group (order by sess_time_diff)	as percentile_4
+from temp_02
+where sess_time_diff::interval > interval '0 second';
+
+
+/************************************
+MAU를 신규 사용자, 기존 사용자(재 방문) 건수로 분리하여 추출(세션 건수도 함께 추출)
+*************************************/
+
+with
+temp_01 as (
+select a.sess_id, a.user_id, a.visit_stime, b.create_time
+	, case when b.create_time >= (:current_date - interval '30 days') and b.create_time < :current_date then 1
+	     else 0 end as is_new_user
+from ga.ga_sess a
+	join ga.ga_users b on a.user_id = b.user_id
+where visit_stime >= (:current_date - interval '30 days') and visit_stime < :current_date
+)
+select count(distinct user_id) as user_cnt
+	, count(distinct case when is_new_user = 1 then user_id end) as new_user_cnt
+	, count(distinct case when is_new_user = 0 then user_id end) as repeat_user_cnt
+	, count(*) as sess_cnt
+from temp_01;
+
+
+
+/************************************
+채널별로 MAU를 신규 사용자, 기존 사용자로 나누고, 채널별 비율까지 함께 계산.
+*************************************/
+select channel_grouping, count(distinct user_id) from ga.ga_sess group by channel_grouping;
+
+with
+temp_01 as (
+select a.sess_id, a.user_id, a.visit_stime, b.create_time, channel_grouping
+	, case when b.create_time >= (:current_date - interval '30 days') and b.create_time < :current_date then 1
+	     else 0 end as is_new_user
+from ga.ga_sess a
+	join ga.ga_users b on a.user_id = b.user_id
+where visit_stime >= (:current_date - interval '30 days') and visit_stime < :current_date
+),
+temp_02 as (
+select channel_grouping
+	, count(distinct case when is_new_user = 1 then user_id end) as new_user_cnt
+	, count(distinct case when is_new_user = 0 then user_id end) as repeat_user_cnt
+	, count(distinct user_id) as channel_user_cnt
+	, count(*) as sess_cnt
+from temp_01
+group by channel_grouping
+)
+select channel_grouping, new_user_cnt, repeat_user_cnt, channel_user_cnt, sess_cnt
+	, 100.0*new_user_cnt/sum(new_user_cnt) over () as new_user_cnt_by_channel
+	, 100.0*repeat_user_cnt/sum(repeat_user_cnt) over () as repeat_user_cnt_by_channel
+from temp_02;
+
+
+/************************************
+채널별 고유 사용자 건수와 매출금액 및 비율, 주문 사용자 건수와 주문 매출 금액 및 비율
+채널별로 고유 사용자 건수와 매출 금액을 구하고 고유 사용자 건수 대비 매출 금액 비율을 추출.
+또한 고유 사용자 중에서 주문을 수행한 사용자 건수를 추출 후 주문 사용자 건수 대비 매출 금액 비율을 추출
+*************************************/
+with temp_01 as (
+	select a.sess_id, a.user_id, a.channel_grouping
+		, b.order_id, b.order_time, c.product_id, c.prod_revenue
+	from ga_sess a
+		left join orders b on a.sess_id = b.sess_id
+		left join order_items c on b.order_id = c.order_id
+	where a.visit_stime >= (:current_date - interval '30 days') and a.visit_stime < :current_date
+)
+select channel_grouping
+	, sum(prod_revenue) as ch_amt -- 채널별 매출
+	--, count(distinct sess_id) as ch_sess_cnt -- 채널별 고유 세션 수
+	, count(distinct user_id) as ch_user_cnt -- 채널별 고유 사용자 수
+	--, count(distinct case when order_id is not null then sess_id end) as ch_ord_sess_cnt -- 채널별 주문 고유 세션수
+	, count(distinct case when order_id is not null then user_id end) as ch_ord_user_cnt -- 채널별 주문 고유 사용자수
+	--, sum(prod_revenue)/count(distinct sess_id) as ch_amt_per_sess -- 접속 세션별 주문 매출 금액
+	, sum(prod_revenue)/count(distinct user_id) as ch_amt_per_user -- 접속 고유 사용자별 주문 매출 금액
+	-- 주문 세션별 매출 금액
+	--, sum(prod_revenue)/count(distinct case when order_id is not null then sess_id end) as ch_ord_amt_per_sess
+	-- 주문 고유 사용자별 매출 금액
+	, sum(prod_revenue)/count(distinct case when order_id is not null then user_id end) as ch_ord_amt_per_user
+from temp_01
+group by channel_grouping order by ch_user_cnt desc;
+
