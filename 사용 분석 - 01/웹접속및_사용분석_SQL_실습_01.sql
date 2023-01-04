@@ -310,7 +310,6 @@ select month,
 from temp_02 
 group by month order by 1;
 
-
 /************************************
 한달 기간중에 주간 방문 횟수별 사용자 건수
 *************************************/
@@ -507,3 +506,70 @@ select channel_grouping
 from temp_01
 group by channel_grouping order by ch_user_cnt desc;
 
+
+/************************************
+device 별 접속 건수 , 전체 건수대비 device별 접속 건수
+일/주별 device별 접속건수
+*************************************/
+
+-- device 별 접속 건수
+select device_category, count(*) as device_cnt
+from ga_sess group by device_category;
+
+-- 전체 건수 대비 device별 접속 건수
+with temp_01 as (
+select count(*) as total_cnt from ga_sess
+),
+temp_02 as (
+select device_category, count(*) as device_cnt
+from ga_sess group by device_category
+)
+select device_category, device_cnt, 1.0*device_cnt/total_cnt
+from temp_01, temp_02;
+
+-- mobile과 tablet을 함께 합쳐서 mobile_tablet으로 접속 건수 조사
+select
+	case when device_category in ('mobile', 'tablet') then 'mobile_tablet'
+			  when device_category = 'desktop' then 'desktop' end as device_category
+	, count(*) as device_cnt
+from ga_sess
+group by case when device_category in ('mobile', 'tablet') then 'mobile_tablet'
+			  when device_category = 'desktop' then 'desktop' end;
+
+
+-- 일별 접속자를 desktop, mobile, tablet 에 따라 접속자수 계산.
+select date_trunc('day', visit_stime)
+	, sum(case when device_category = 'desktop' then 1 else 0 end) as desktop_cnt
+	, sum(case when device_category = 'mobile' then 1 else 0 end) as mobile_cnt
+	, sum(case when device_category = 'tablet' then 1 else 0 end) as tablet_cnt
+	, count(*)
+from ga_sess
+group by date_trunc('day', visit_stime);
+
+-- 주별 접속자를 desktop, mobile, tablet 에 따라 접속자수 계산.
+select date_trunc('week', visit_stime)
+	, sum(case when device_category = 'desktop' then 1 else 0 end) as desktop_cnt
+	, sum(case when device_category = 'mobile' then 1 else 0 end) as mobile_cnt
+	, sum(case when device_category = 'tablet' then 1 else 0 end) as tablet_cnt
+	, count(*)
+from ga_sess
+group by date_trunc('week', visit_stime);
+
+
+-- 접속 device 별 매출과 device별 세션당 매출과 사용자별 매출액 추출.
+with temp_01 as (
+	select a.order_id, a.order_time,  b.product_id, b.prod_revenue, c.sess_id, c.user_id, c.device_category
+	from orders a
+		join order_items b
+			on a.order_id = b.order_id
+		join ga_sess c
+			on a.sess_id = c.sess_id
+	where a.order_status = 'delivered'
+)
+select device_category, sum(prod_revenue) device_sum_amount
+	, count(distinct sess_id) as sess_cnt
+	, count(distinct user_id) as user_cnt
+	, sum(prod_revenue)/count(distinct sess_id) as sum_amount_per_sess
+	, sum(prod_revenue)/count(distinct user_id) as sum_amount_per_user
+from temp_01;
+group by device_category;
