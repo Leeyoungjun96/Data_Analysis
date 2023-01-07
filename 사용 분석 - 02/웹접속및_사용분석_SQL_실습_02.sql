@@ -1,144 +1,290 @@
-/************************************
-일별 세션건수, 일별 방문 사용자(유저), 사용자별 평균 세션 수
-*************************************/
-with temp_01 as 
-(
-	select to_char(date_trunc('day', visit_stime), 'yyyy-mm-dd') as d_day
-		-- ga_sess 테이블에는 sess_id로 unique하므로 count(sess_id)와 동일
-		, count(distinct sess_id) as daily_sess_cnt
-		, count(sess_id) as daily_sess_cnt_again
-		, count(distinct user_id) as daily_user_cnt 
-	from ga.ga_sess group by to_char(date_trunc('day', visit_stime), 'yyyy-mm-dd')
-)
-select * 
-	, 1.0*daily_sess_cnt/daily_user_cnt as avg_user_sessions
-	-- 아래와 같이 정수와 정수를 나눌 때 postgresql은 정수로 형변환 함. 1.0을 곱해주거나 명시적으로 float type선언 
-	--, daily_sess_cnt/daily_user_cnt
-from temp_01;
 
 /************************************
-DAU, WAU, MAU 및 전주 대비 WAU 비율
+사용자 생성 날짜 별 일주일간 잔존율(Retention rate) 구하기
 *************************************/
--- 일별 방문한 고객 수(DAU)
-select date_trunc('day', visit_stime)::date as d_day, count(distinct user_id) as user_cnt 
-from ga.ga_sess 
-group by date_trunc('day', visit_stime)::date;
-
--- 주별 방문한 고객수(WAU)
-select date_trunc('week', visit_stime)::date as week_day, count(distinct user_id) as user_cnt
-from ga.ga_sess 
-group by date_trunc('week', visit_stime)::date order by 1;
-
--- 월별 방문한 고객수(MAU)
-select date_trunc('month', visit_stime)::date as month_day, count(distinct user_id) as user_cnt 
-from ga.ga_sess 
-group by date_trunc('month', visit_stime)::date;
-
--- 전주 대비 WAU 비율
 with temp_01 as (
-	select date_trunc('week', visit_stime)::date as week_day
-		, count(distinct user_id) as user_cnt
-	from ga.ga_sess group by date_trunc('week', visit_stime)::date
+	select a.user_id, date_trunc('day', a.create_time)::date as user_create_date,  date_trunc('day', b.visit_stime)::date as sess_visit_date
+		, count(*) cnt
+	from ga_users a
+		left join ga_sess b
+			on a.user_id = b.user_id
+	where  create_time >= (:current_date - interval '8 days') and create_time < :current_date
+	group by a.user_id, date_trunc('day', a.create_time)::date, date_trunc('day', b.visit_stime)::date
+),
+temp_02 as (
+select user_create_date, count(*) as create_cnt
+	-- d1 에서 d7 일자별 접속 사용자 건수 구하기. 
+	, sum(case when sess_visit_date = user_create_date + interval '1 day' then 1 else 0 end ) as d1_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '2 day' then 1 else 0 end) as d2_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '3 day' then 1 else 0 end) as d3_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '4 day' then 1 else 0 end) as d4_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '5 day' then 1 else 0 end) as d5_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '6 day' then 1 else 0 end) as d6_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '7 day' then 1 else 0 end) as d7_cnt
+	/*
+	, sum(case when sess_visit_date = user_create_date + interval '1 day' then 1 else null end ) as d1_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '2 day' then 1 else null end) as d2_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '3 day' then 1 else null end) as d3_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '4 day' then 1 else null end) as d4_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '5 day' then 1 else null end) as d5_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '6 day' then 1 else null end) as d6_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '7 day' then 1 else null end) as d7_cnt
+	*/
+from temp_01 
+group by user_create_date
 )
-select week_day, user_cnt
-	-- 만일 이전 데이터가 없으면 현재 user_cnt를 가져옴. 
-	, coalesce(lag(user_cnt) over (order by week_day), user_cnt) as prev_user_cnt
-	-- 만일 이전 데이터가 없으면 100
-	, coalesce(round(100.0 * user_cnt/lag(user_cnt) over (order by week_day), 2), 100.0) as prev_pct
-from temp_01;
+select user_create_date, create_cnt
+     -- d1 에서 d7 일자별 잔존율 구하기.
+	, round(100.0 * d1_cnt/create_cnt, 2) as d1_ratio
+	, round(100.0 * d2_cnt/create_cnt, 2) as d2_ratio
+	, round(100.0 * d3_cnt/create_cnt, 2) as d3_ratio
+	, round(100.0 * d4_cnt/create_cnt, 2) as d4_ratio
+	, round(100.0 * d5_cnt/create_cnt, 2) as d5_ratio
+	, round(100.0 * d6_cnt/create_cnt, 2) as d6_ratio
+	, round(100.0 * d7_cnt/create_cnt, 2) as d7_ratio
+from temp_02 order by 1;
 
 /************************************
-DAU와 MAU의 비율. stickiness 월간 사용자들중 얼마나 어제 재 접속했는가? 재방문 지표로 서비스의 활성화 지표 제공.  
+주별 잔존율(Retention rate) 및 주별 특정 채널 잔존율
 *************************************/
- 
-with temp_dau as (
-select to_char(date_trunc('day', visit_stime)::date, 'yyyymmdd') as d_day
-	, count(distinct user_id) as dau
-from ga.ga_sess 
-where visit_stime between to_date('2016-08-01', 'yyyy-mm-dd') and to_date('2016-08-31', 'yyyy-mm-dd')
-group by date_trunc('day', visit_stime)::date
+with temp_01 as (
+	select a.user_id, date_trunc('week', a.create_time)::date as user_create_date,  date_trunc('week', b.visit_stime)::date as sess_visit_date
+		, count(*) cnt
+	from ga_users a
+		left join ga_sess b
+			on a.user_id = b.user_id
+	--where  create_time >= (:current_date - interval '7 weeks') and create_time < :current_date
+	where create_time >= to_date('20160912', 'yyyymmdd') and create_time < to_date('20161101', 'yyyymmdd')
+	group by a.user_id, date_trunc('week', a.create_time)::date, date_trunc('week', b.visit_stime)::date
 ), 
-temp_mau as ( 
-select to_char(date_trunc('month', visit_stime)::date, 'yyyymm') as month_day
-	, count(distinct user_id) as mau 
-from ga.ga_sess 
-where visit_stime between to_char('2016-08-01', 'yyyy-mm-dd') and to_char('2016-08-31', 'yyyy-mm-dd')
-group by date_trunc('month', visit_stime)::date
-)
-select a.d_day, a.dau, b.month_day, b.mau
-	, round(100.0 * a.dau/b.mau, 2) as dau_mau_ratio
-from temp_dau a join temp_mau b
-on substring(a.d_day, 1, 6) = b.month_day
-
--- 전체 기간중 고객 별로 가장 많이 방문한 순으로 조회. 
-select user_id, count(*)
-from ga_sess group by user_id order by 2 desc;
-
--- 특정 횟수 구간별로 방문한 고객 수 - 8월 한달간 1회, 2-3회, 4-8, 9-14, 15-25, 26회 이상 방문한 고객 건수 조회.
-with temp_01 as (  
-	select user_id, count(*) as cnt
-	from ga_sess where visit_stime between to_date('2016-08-01', 'yyyy-mm-dd') and to_date('2016-08-31 23:59:59', 'yyyy-mm-dd hh24:mi:ss') group by user_id 
-)
-select case when cnt = 1 then '0_only_first_session'
-			  when cnt between 2 and 3 then '1_lt_3'
-			  when cnt between 4 and 8 then '2_lt_8'
-			  when cnt between 9 and 14 then '3_lt_14'
-			  when cnt between 15 and 25 then '4_lt_25'
-			  when cnt >= 26 then '5_over_26' end as gubun
-	   , count(user_id) as user_cnt
+temp_02 as (
+select user_create_date, count(*) as create_cnt
+     -- w1 에서 w7까지 주단위 접속 사용자 건수 구하기.
+	, sum(case when sess_visit_date = user_create_date + interval '1 week' then 1 else null end ) as w1_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '2 week' then 1 else null end) as w2_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '3 week' then 1 else null end) as w3_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '4 week' then 1 else null end) as w4_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '5 week' then 1 else null end) as w5_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '6 week' then 1 else null end) as w6_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '7 week' then 1 else null end) as w7_cnt
 from temp_01 
-group by case when cnt = 1 then '0_only_first_session'
-			  when cnt between 2 and 3 then '1_lt_3'
-			  when cnt between 4 and 8 then '2_lt_8'
-			  when cnt between 9 and 14 then '3_lt_14'
-			  when cnt between 15 and 25 then '4_lt_25'
-			  when cnt >= 26 then '5_over_26' end
-order by 1;
-
--- 사용자는 최소 8월말 기준으로 3일 전에 생성되어야 함. 8월 한달간 1회, 2-3회, 4-8, 9-14, 15-25, 26회 이상 방문한 고객 건수 조회
-with temp_01 as (  
-	select a.user_id, count(*) as cnt
-	from ga_sess a 
-		join ga_users b 
-		on a.user_id = b.user_id 
-	where visit_stime between to_date('2016-08-01', 'yyyy-mm-dd') and to_date('2016-08-31 23:59:59', 'yyyy-mm-dd hh24:mi:ss') 
-	and b.create_time <= to_date('2016-08-31', 'yyyy-mm-dd hh24:mi:ss') - 2
-	group by a.user_id 
+group by user_create_date
 )
-select case when cnt = 1 then '0_only_first_session'
-			  when cnt between 2 and 3 then '1_lt_3'
-			  when cnt between 4 and 8 then '2_lt_8'
-			  when cnt between 9 and 14 then '3_lt_14'
-			  when cnt between 15 and 25 then '4_lt_25'
-			  when cnt >= 26 then '5_over_26' end as gubun
-	   , count(user_id) as user_cnt
+select user_create_date, create_cnt
+    -- w1 에서 w7 주별 잔존율 구하기.
+	, round(100.0 * w1_cnt/create_cnt, 2) as w1_ratio
+	, round(100.0 * w2_cnt/create_cnt, 2) as w2_ratio
+	, round(100.0 * w3_cnt/create_cnt, 2) as w3_ratio
+	, round(100.0 * w4_cnt/create_cnt, 2) as w4_ratio
+	, round(100.0 * w5_cnt/create_cnt, 2) as w5_ratio
+	, round(100.0 * w6_cnt/create_cnt, 2) as w6_ratio
+	, round(100.0 * w7_cnt/create_cnt, 2) as w7_ratio
+from temp_02 order by 1;
+
+-- 주 단위 특정 채널 잔존율(Retention rate)
+with temp_01 as (
+	select a.user_id, date_trunc('week', a.create_time)::date as user_create_date,  date_trunc('week', b.visit_stime)::date as sess_visit_date
+		, count(*) cnt
+	from ga_users a
+		left join ga_sess b
+			on a.user_id = b.user_id
+	--where  create_time >= (:current_date - interval '7 weeks') and create_time < :current_date
+	where create_time >= to_date('20160912', 'yyyymmdd') and create_time < to_date('20161101', 'yyyymmdd')
+	and channel_grouping='Referral' -- Social Organic Search, Direct, Referral
+	group by a.user_id, date_trunc('week', a.create_time)::date, date_trunc('week', b.visit_stime)::date
+), 
+temp_02 as (
+select user_create_date, count(*) as create_cnt
+	-- w1 에서 w7까지 주단위 접속 사용자 건수 구하기.
+	, sum(case when sess_visit_date = user_create_date + interval '1 week' then 1 else null end ) as w1_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '2 week' then 1 else null end) as w2_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '3 week' then 1 else null end) as w3_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '4 week' then 1 else null end) as w4_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '5 week' then 1 else null end) as w5_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '6 week' then 1 else null end) as w6_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '7 week' then 1 else null end) as w7_cnt
 from temp_01 
-group by case when cnt = 1 then '0_only_first_session'
-			  when cnt between 2 and 3 then '1_lt_3'
-			  when cnt between 4 and 8 then '2_lt_8'
-			  when cnt between 9 and 14 then '3_lt_14'
-			  when cnt between 15 and 25 then '4_lt_25'
-			  when cnt >= 26 then '5_over_26' end
-order by 1;
+group by user_create_date
+)
+select user_create_date, create_cnt
+     -- w1 에서 w7 주별 잔존율 구하기.
+	, round(100.0 * w1_cnt/create_cnt, 2) as w1_ratio
+	, round(100.0 * w2_cnt/create_cnt, 2) as w2_ratio
+	, round(100.0 * w3_cnt/create_cnt, 2) as w3_ratio
+	, round(100.0 * w4_cnt/create_cnt, 2) as w4_ratio
+	, round(100.0 * w5_cnt/create_cnt, 2) as w5_ratio
+	, round(100.0 * w6_cnt/create_cnt, 2) as w6_ratio
+	, round(100.0 * w7_cnt/create_cnt, 2) as w7_ratio
+from temp_02 order by 1;
+
+/************************************
+ (2016년 9월 12일 부터) 일주일간 생성된 사용자들에 대해 채널별 주 단위 잔존율(Retention rate)
+*************************************/
+with temp_01 as (
+	select a.user_id, channel_grouping
+		, date_trunc('week', a.create_time)::date as user_create_date,  date_trunc('week', b.visit_stime)::date as sess_visit_date
+		, count(*) cnt
+	from ga_users a
+		left join ga_sess b
+			on a.user_id = b.user_id
+	where  create_time >= to_date('20160912', 'yyyymmdd') and create_time < to_date('20160919', 'yyyymmdd')
+	--and channel_grouping='Referral' -- Social Organic Search, Direct, Referral
+	group by a.user_id, channel_grouping, date_trunc('week', a.create_time)::date, date_trunc('week', b.visit_stime)::date
+), 
+temp_02 as (
+select user_create_date, channel_grouping, count(*) as create_cnt
+     -- w1 에서 w7까지 주단위 접속 사용자 건수 구하기.
+	, sum(case when sess_visit_date = user_create_date + interval '1 week' then 1 else null end ) as w1_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '2 week' then 1 else null end) as w2_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '3 week' then 1 else null end) as w3_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '4 week' then 1 else null end) as w4_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '5 week' then 1 else null end) as w5_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '6 week' then 1 else null end) as w6_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '7 week' then 1 else null end) as w7_cnt
+from temp_01 
+group by user_create_date, channel_grouping
+)
+select user_create_date, channel_grouping, create_cnt
+    -- w1 에서 w7 주별 잔존율 구하기
+	, round(100.0 * w1_cnt/create_cnt, 2) as w1_ratio
+	, round(100.0 * w2_cnt/create_cnt, 2) as w2_ratio
+	, round(100.0 * w3_cnt/create_cnt, 2) as w3_ratio
+	, round(100.0 * w4_cnt/create_cnt, 2) as w4_ratio
+	, round(100.0 * w5_cnt/create_cnt, 2) as w5_ratio
+	, round(100.0 * w6_cnt/create_cnt, 2) as w6_ratio
+	, round(100.0 * w7_cnt/create_cnt, 2) as w7_ratio
+from temp_02 order by 3 desc;
+
+/************************************
+ 7일간 생성된 총 사용자를 기반으로 총 잔존율을 구하고, 7일간 일별 잔존율을 함께 구하기 
+*************************************/
+-- 7일간 생성된 총 사용자를 기반으로 총 잔존율을 구하고, 7일간 일별 잔존율을 함께 구하기 
+with temp_01 as (
+	select a.user_id, date_trunc('day', a.create_time) as user_create_date,  date_trunc('day', b.visit_stime) as sess_visit_date
+		, count(*) cnt
+	from ga_users a
+		left join ga_sess b
+			on a.user_id = b.user_id
+	where  create_time >= (:current_date - interval '8 days') and create_time < :current_date
+	group by a.user_id, date_trunc('day', a.create_time), date_trunc('day', b.visit_stime)
+),
+temp_02 as (
+select user_create_date, count(*) as create_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '1 day' then 1 else null end ) as d1_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '2 day' then 1 else null end) as d2_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '3 day' then 1 else null end) as d3_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '4 day' then 1 else null end) as d4_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '5 day' then 1 else null end) as d5_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '6 day' then 1 else null end) as d6_cnt
+	, sum(case when sess_visit_date = user_create_date + interval '7 day' then 1 else null end) as d7_cnt
+from temp_01
+group by user_create_date
+)
+-- 7일간 생성된 총 사용자를 기반으로 총 잔존율을 구하기
+select 'All User' as user_create_date, sum(create_cnt) as create_cnt
+	, round(100.0 * sum(d1_cnt)/sum(create_cnt), 2) as d1_ratio
+	, round(100.0 * sum(d2_cnt)/sum(create_cnt), 2) as d2_ratio
+	, round(100.0 * sum(d3_cnt)/sum(create_cnt), 2) as d3_ratio
+	, round(100.0 * sum(d4_cnt)/sum(create_cnt), 2) as d4_ratio
+	, round(100.0 * sum(d5_cnt)/sum(create_cnt), 2) as d5_ratio
+	, round(100.0 * sum(d6_cnt)/sum(create_cnt), 2) as d6_ratio
+	, round(100.0 * sum(d7_cnt)/sum(create_cnt), 2) as d7_ratio
+from temp_02
+union all
+-- 7일간 일별 잔존율
+select to_char(user_create_date, 'yyyy-mm-dd') as user_create_date, create_cnt
+	, round(100.0 * d1_cnt/create_cnt, 2) as d1_ratio
+	, round(100.0 * d2_cnt/create_cnt, 2) as d2_ratio
+	, round(100.0 * d3_cnt/create_cnt, 2) as d3_ratio
+	, round(100.0 * d4_cnt/create_cnt, 2) as d4_ratio
+	, round(100.0 * d5_cnt/create_cnt, 2) as d5_ratio
+	, round(100.0 * d6_cnt/create_cnt, 2) as d6_ratio
+	, round(100.0 * d7_cnt/create_cnt, 2) as d7_ratio
+from temp_02 order by 1;
 
 
-/* 월별 특정 횟수 구간별로 방문한 고객 수 구하기 
-  아래 스텝별로 생성. 
-1. 사용자별 월별 접속 횟수, 월말 3일 이전 생성된 사용자 제외 
-2.  사용자별 월별 접속 구간별 횟수, 월말 3일 이전 생성된 사용자 제외
-3.  gubun 별로 pivot 하여 추출
-*/
+/**********************************************
+ 전체 매출 전환율 및 일별, 월별 매출 전환율과 매출액
+***********************************************/
+/* 
+   Unknown = 0. (홈페이지)
+   Click through of product lists = 1, (상품 목록 선택)
+   Product detail views = 2, (상품 상세 선택)
+   Add product(s) to cart = 3, (카트에 상품 추가)
+   Remove product(s) from cart = 4, (카트에서 상품 제거)
+   Check out = 5, (결재 시작)
+   Completed purchase = 6, (구매 완료)
+   Refund of purchase = 7, (환불)
+   Checkout options = 8 (결재 옵션 선택)
+   
+   이 중 1, 3, 4가 주로 EVENT로 발생. 0, 2, 5, 6은 주로 PAGE로 발생. 
+ *
+ **/
 
--- user 생성일자가 해당 월의 마지막 일에서 3일전인 user 추출. 
-select user_id, create_time, (date_trunc('month', create_time) + interval '1 month' - interval '1 day')::date
-from ga_users
-where create_time <= (date_trunc('month', create_time) + interval '1 month' - interval '1 day')::date - 2;
+-- action_type별 hit_type에 따른 건수
+select action_type, count(*) action_cnt
+	, sum(case when hit_type='PAGE' then 1 else 0 end) as page_action_cnt
+	, sum(case when hit_type='EVENT' then 1 else 0 end) as event_action_cnt
+from ga.ga_sess_hits
+group by action_type
+;
 
--- 사용자별 월별 접속 횟수, 월말 3일 이전 생성된 사용자 제외 
-select a.user_id, date_trunc('month', visit_stime)::date as month, count(*) as monthly_user_cnt  
-from ga_sess a 
-	join ga_users b 
-	on a.user_id = b.user_id 
-where b.create_time <= (date_trunc('month', b.create_time) + interval '1 month' - interval '1 day')::date - 2
-group by a.user_id, date_trunc('month', visit_stime)::date;
+-- 전체 매출 전환율
+with 
+temp_01 as ( 
+select count(distinct sess_id) as purchase_sess_cnt
+from ga.ga_sess_hits
+where action_type = '6'
+),
+temp_02 as ( 
+select count(distinct sess_id) as sess_cnt
+from ga.ga_sess_hits
+)
+select a.purchase_sess_cnt, b.sess_cnt, 100.0* a.purchase_sess_cnt/sess_cnt as sale_cv_rate
+from temp_01 a 
+	cross join temp_02 b
+;
 
+
+-- 과거 1주일간 매출 전환률
+with 
+temp_01 as ( 
+select count(distinct a.sess_id) as purchase_sess_cnt
+from ga.ga_sess_hits a
+	join ga.ga_sess b on a.sess_id = b.sess_id
+where a.action_type = '6'
+and b.visit_stime >= (:current_date - interval '7 days') and b.visit_stime < :current_date
+),
+temp_02 as ( 
+select count(distinct a.sess_id) as sess_cnt
+from ga.ga_sess_hits a
+	join ga.ga_sess b on a.sess_id = b.sess_id
+and b.visit_stime >= (:current_date - interval '7 days') and b.visit_stime < :current_date
+)
+select a.purchase_sess_cnt, b.sess_cnt, 100.0* a.purchase_sess_cnt/sess_cnt as sale_cv_rate
+from temp_01 a 
+	cross join temp_02 b
+;
+
+
+-- 과거 1주일간 일별 매출 전환률 - 01
+with 
+temp_01 as ( 
+select date_trunc('day', b.visit_stime)::date as cv_day, count(distinct a.sess_id) as purchase_sess_cnt
+from ga.ga_sess_hits a
+	join ga.ga_sess b on a.sess_id = b.sess_id
+where a.action_type = '6'
+and b.visit_stime >= (:current_date - interval '7 days') and b.visit_stime < :current_date
+group by date_trunc('day', b.visit_stime)::date
+), 
+temp_02 as ( 
+select date_trunc('day', b.visit_stime)::date as cv_day, count(distinct a.sess_id) as sess_cnt
+from ga.ga_sess_hits a
+	join ga.ga_sess b on a.sess_id = b.sess_id
+where b.visit_stime >= (:current_date - interval '7 days') and b.visit_stime < :current_date
+group by date_trunc('day', b.visit_stime)::date
+)
+select a.cv_day, a.purchase_sess_cnt, b.sess_cnt, 100.0* a.purchase_sess_cnt/sess_cnt as sale_cv_rate
+from temp_01 a 
+	join temp_02 b on a.cv_day = b.cv_day
+;
