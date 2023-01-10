@@ -721,3 +721,190 @@ group by action_type;
 
 
 select * from ga_sess;
+
+
+-- 특정 기간중 방문 횟수별 방문 사용자(repeat visitor) 건수
+with
+temp_01 as (
+select user_id, count(distinct visit_date) as daily_visit_cnt
+from ga_sess
+where visit_date between '20160801' and '20160807'
+group by user_id
+)
+select daily_visit_cnt, count(*) as user_cnt
+from temp_01 group by daily_visit_cnt
+order by 1;
+
+-- 한달 기간중에 주간 방문 횟수별 사용자 건수
+with
+temp_01 as (
+select user_id,
+	case when visit_date between '20160801' and '20160807' then '1st'
+		 when visit_date between '20160808' and '20160814' then '2nd'
+		 when visit_date between '20160815' and '20160821' then '3rd'
+		 when visit_date between '20160822' and '20160828' then '4th'
+		 when visit_date between '20160829' and '20160904' then '5th' end as week_gubun
+	, count(distinct visit_date) as daily_visit_cnt
+from ga_sess
+where visit_date between '20160801' and '20160831'
+group by user_id
+, case when visit_date between '20160801' and '20160807' then '1st'
+		 when visit_date between '20160808' and '20160814' then '2nd'
+		 when visit_date between '20160815' and '20160821' then '3rd'
+		 when visit_date between '20160822' and '20160828' then '4th'
+		 when visit_date between '20160829' and '20160904' then '5th' end
+)
+select daily_visit_cnt
+	, sum(case when week_gubun='1st' then 1 else 0 end) as week_1st_user_cnt
+	, sum(case when week_gubun='2nd' then 1 else 0 end) as week_2nd_user_cnt
+	, sum(case when week_gubun='3rd' then 1 else 0 end) as week_3rd_user_cnt
+	, sum(case when week_gubun='4th' then 1 else 0 end) as week_4th_user_cnt
+	, sum(case when week_gubun='5th' then 1 else 0 end) as week_5th_user_cnt
+from temp_01 group by daily_visit_cnt
+order by 1;
+
+-- 임시 테이블을 이용하여 동적으로 주간 기간 설정 - 한달 기간중에 주간 방문 횟수별 사용자 건수
+with
+temp_00(week_gubun, start_date, end_date) as
+(
+values
+('1st', '20160801', '20160807')
+,('2nd', '20160808', '20160814')
+,('3rd', '20160815', '20160821')
+,('4th', '20160822', '20160828')
+,('5th', '20160829', '20160904')
+),
+temp_01 as
+(
+select  a.user_id, b.week_gubun
+	, count(distinct visit_date) as daily_visit_cnt
+from ga_sess a
+	join temp_00 b on a.visit_date between b.start_date and end_date
+ --where a.visit_date between (select min(start_date) from temp_00) and (select max(end_date) from temp_00) -- 성능을 위해서
+group by a.user_id, b.week_gubun
+)
+select daily_visit_cnt
+	, sum(case when week_gubun='1st' then 1 else 0 end) as week_1st_user_cnt
+	, sum(case when week_gubun='2nd' then 1 else 0 end) as week_2nd_user_cnt
+	, sum(case when week_gubun='3rd' then 1 else 0 end) as week_3rd_user_cnt
+	, sum(case when week_gubun='4th' then 1 else 0 end) as week_4th_user_cnt
+	, sum(case when week_gubun='5th' then 1 else 0 end) as week_5th_user_cnt
+from temp_01 group by daily_visit_cnt
+order by 1;
+
+
+-- 첫번째 세션과 반복 세션의 매출 전환율 비교
+with
+temp_01 as (
+select
+	case when row_number() over (partition by user_id order by visit_stime) = 1 then 'first_session'
+	     else 'repeat_session' end as sess_gubun
+	, a.*
+from ga_sess a
+where visit_date between '20160801' and '20160831'
+)
+select sess_gubun
+	, count(distinct a.sess_id) as sess_cnt
+	, count(distinct b.order_id) as ord_cnt
+	, 1.0 * count(distinct b.order_id)/count(distinct a.sess_id) as conv_rate
+	, sum(c.prod_revenue)/count(distinct a.sess_id) as revenue_per_sess
+from temp_01 a
+	left join orders b on a.sess_id = b.sess_id
+	left join order_items c on b.order_id = c.order_id
+group by sess_gubun;
+
+
+-- MAU를 신규 고객, 월별 반복 방문고객, 재 방문 고객건수로 분리하여 추출.
+with
+temp_01 as (
+	select a.sess_id, a.user_id, date_trunc('month', a.visit_stime) as visit_month
+		, date_trunc('month', b.create_time) as create_month
+	from ga_sess a
+		join ga_users b on a.user_id = b.user_id
+	where a.visit_stime between to_date('20160801', 'yyyymmdd') and to_date('20161031', 'yyyymmdd')
+),
+temp_02 as (
+	select user_id, visit_month, max(create_month) as create_month
+		, lag(visit_month) over (partition by user_id order by visit_month) as prev_visit_month
+	from temp_01
+	group by user_id, visit_month
+),
+temp_03 as (
+select a.*
+	, case when create_month = visit_month then 'new_user'
+		   when (visit_month - interval '1' month) = prev_visit_month then 'repeat_user'
+		   else 'comeback_user' end as user_gubun
+from temp_02 a
+-- where 조건을 삭제하면 전체 user의 visit_month별 접속이 나옴. U0000108 repeat 사용자 경우로 설명.
+-- where 조건을 넣으면 이제 사용자별로 고유한 레벨이 됨.
+where visit_month = to_date('20161001', 'yyyymmdd')
+)
+select count(*) as mau
+	, sum(case when user_gubun='new_user' then 1 else 0 end) as new_user_cnt
+	, sum(case when user_gubun='repeat_user' then 1 else 0 end) as repeat_user_cnt
+	, sum(case when user_gubun='comeback_user' then 1 else 0 end) as comeback_user_cnt
+from temp_03;
+
+
+-- MAU를 신규 고객, 월별 반복 방문고객, 재 방문 고객건수로 분리하여 추출.
+with
+temp_01 as (
+	select a.sess_id, a.user_id, date_trunc('month', a.visit_stime) as visit_month
+		, date_trunc('month', b.create_time) as create_month
+	from ga_sess a
+		join ga_users b on a.user_id = b.user_id
+	where a.visit_stime between to_date('20160801', 'yyyymmdd') and to_date('20161031', 'yyyymmdd')
+),
+temp_02 as (
+	select user_id, visit_month, max(create_month) as create_month
+		, lag(visit_month) over (partition by user_id order by visit_month) as prev_visit_month
+	from temp_01
+	group by user_id, visit_month
+),
+temp_03 as (
+select a.*
+	, case when create_month = visit_month then 'new_user'
+		   when (visit_month - interval '1 month') = prev_visit_month then 'repeat_user'
+		   else 'comeback_user' end as user_gubun
+from temp_02 a
+-- where 조건을 삭제하면 전체 user의 visit_month별 접속이 나옴. U0000108 repeat 사용자 경우로 설명.
+-- where 조건을 넣으면 이제 사용자별로 고유한 레벨이 됨.
+where visit_month = to_date('20161001', 'yyyymmdd')
+)
+select count(*) as mau
+	, sum(case when user_gubun='new_user' then 1 else 0 end) as new_user_cnt
+	, sum(case when user_gubun='repeat_user' then 1 else 0 end) as repeat_user_cnt
+	, sum(case when user_gubun='comeback_user' then 1 else 0 end) as comeback_user_cnt
+from temp_03;
+
+
+--  WAU를 주별로 신규 고객, 반복 방문고객, 재 방문 고객건수로 분리하여 추출.
+with
+temp_01 as (
+	select a.sess_id, a.user_id, date_trunc('week', a.visit_stime) as visit_week
+		, date_trunc('week', b.create_time) as create_week
+	from ga_sess a
+		join ga_users b on a.user_id = b.user_id
+	where a.visit_stime between to_date('20160801', 'yyyymmdd') and to_date('20161031', 'yyyymmdd')
+),
+temp_02 as (
+	select user_id, visit_week, max(create_week) as create_week
+		, lag(visit_week) over (partition by user_id order by visit_week) as prev_visit_week
+	from temp_01
+	group by user_id, visit_week
+),
+temp_03 as (
+	select a.*
+		, case when create_week = visit_week then 'new_user'
+			   when (visit_week - interval '1 week') = prev_visit_week then 'repeat_user'
+			   else 'comeback_user' end as user_gubun
+	from temp_02 a
+where visit_week between to_date('20161001', 'yyyymmdd') and to_date('20161024', 'yyyymmdd')
+)
+select visit_week, count(*) as mau
+	, sum(case when user_gubun='new_user' then 1 else 0 end) as new_user_cnt
+	, sum(case when user_gubun='repeat_user' then 1 else 0 end) as repeat_user_cnt
+	, sum(case when user_gubun='comeback_user' then 1 else 0 end) as comeback_user_cnt
+from temp_03
+group by visit_week
+order by 1;
