@@ -497,3 +497,112 @@ from (
 	where visit_stime >= (to_date('2016-10-31', 'yyyy-mm-dd') - interval '7 days') and visit_stime < to_date('2016-10-31', 'yyyy-mm-dd')
 	) a where a.action_seq = 1
 ;
+
+
+
+-- action_type 전환 퍼널 세션 수 구하기(FLOW를 순차적으로 수행한 전환 퍼널)
+-- action_type 0 -> 1 -> 2 -> 3 -> 5 -> 6 순으로의 전환 퍼널 세션 수를 구함.  
+with 
+temp_act_0 as ( 
+select sess_id, hit_type, action_type
+from ga.temp_funnel_base a
+where a.action_type = '0'
+), 
+temp_hit_02 as ( 
+select a.sess_id as home_sess_id
+	, b.sess_id as plist_sess_id
+	, c.sess_id as pdetail_sess_id
+	, d.sess_id as cart_sess_id
+	, e.sess_id as check_sess_id
+	, f.sess_id as pur_sess_id
+from temp_act_0 a
+	left join ga.temp_funnel_base b on (a.sess_id = b.sess_id and b.action_type = '1')
+	left join ga.temp_funnel_base c on (b.sess_id = c.sess_id and c.action_type = '2')
+	left join ga.temp_funnel_base d on (c.sess_id = d.sess_id and d.action_type = '3')
+	left join ga.temp_funnel_base e on (d.sess_id = e.sess_id and e.action_type = '5')
+	left join ga.temp_funnel_base f on (e.sess_id = f.sess_id and f.action_type = '6')
+)
+select count(home_sess_id) as home_sess_cnt
+	, count(plist_sess_id) as plist_sess_cnt
+	, count(pdetail_sess_id) as pdetail_sess_cnt
+	, count(cart_sess_id) as cart_sess_cnt
+	, count(check_sess_id) as check_sess_cnt
+	, count(pur_sess_id) as purchase_sess_cnt
+from temp_hit_02
+;
+
+-- action_type 전환 퍼널 세션 수 구하기(FLOW를 스킵한 세션까지 포함한 전환 퍼널)
+with
+temp_01 as (
+select count(sess_id) as home_sess_cnt
+from temp_funnel_base
+where action_type = '0'
+),
+temp_02 as (
+select count(sess_id) as plist_sess_cnt
+from temp_funnel_base
+where action_type = '1'
+),
+temp_03 as (
+select count(sess_id) as pdetail_sess_cnt
+from temp_funnel_base
+where action_type = '2'
+),
+temp_04 as (
+select count(sess_id) as cart_sess_cnt
+from temp_funnel_base
+where action_type = '3'
+),
+temp_05 as (
+select count(sess_id) as check_sess_cnt
+from temp_funnel_base
+where action_type = '5'
+),
+temp_06 as (
+select count(sess_id) as purchase_sess_cnt
+from temp_funnel_base
+where action_type = '6'
+)
+select home_sess_cnt, plist_sess_cnt, pdetail_sess_cnt
+	, cart_sess_cnt, check_sess_cnt, purchase_sess_cnt
+from temp_01
+	cross join temp_02
+	cross join temp_03
+	cross join temp_04
+	cross join temp_05
+	cross join temp_06
+;
+
+
+-- 채널별 action_type 전환 퍼널 세션 수 구하기
+-- 채널별로 action_type 0 -> 1 -> 2 -> 3 -> 6 순으로의 전환 퍼널 세션 수를 구함.
+with 
+temp_act_0 as ( 
+select sess_id, hit_type, action_type, channel_grouping
+from ga.temp_funnel_base a
+where a.action_type = '0'
+), 
+temp_hit_02 as ( 
+select a.sess_id as home_sess_id, a.channel_grouping as home_cgrp
+	, b.sess_id as plist_sess_id, b.channel_grouping as plist_cgrp
+	, c.sess_id as pdetail_sess_id, c.channel_grouping as pdetail_cgrp
+	, d.sess_id as cart_sess_id, d.channel_grouping as cart_cgrp
+	, e.sess_id as check_sess_id, e.channel_grouping as check_cgrp
+	, f.sess_id as pur_sess_id, f.channel_grouping as pur_cgrp
+from temp_act_0 a
+	left join ga.temp_funnel_base b on (a.sess_id = b.sess_id and b.action_type = '1')
+	left join ga.temp_funnel_base c on (b.sess_id = c.sess_id and c.action_type = '2')
+	left join ga.temp_funnel_base d on (c.sess_id = d.sess_id and d.action_type = '3')
+	left join ga.temp_funnel_base e on (d.sess_id = e.sess_id and e.action_type = '5')
+	left join ga.temp_funnel_base f on (e.sess_id = f.sess_id and f.action_type = '6')
+)
+select home_cgrp
+ 	, count(home_sess_id) as home_sess_cnt
+	, count(plist_sess_id) as plist_sess_cnt
+	, count(pdetail_sess_id) as pdetail_sess_cnt
+	, count(cart_sess_id) as cart_sess_cnt
+	, count(check_sess_id) as check_sess_cnt
+	, count(pur_sess_id) as purchase_sess_cnt
+from temp_hit_02
+group by home_cgrp
+;
