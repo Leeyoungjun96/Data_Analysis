@@ -1,66 +1,7 @@
-# 컬럼별 리스트 
-lastLoopList = [] 
-lastNumList = [] # 맨 마지막에 몇페이지 있는지 확인
-agency = []
-region = []
-agencyName = []
-carRegist = []
-carType = []
-carYear = []
-carCapacity = []
-carName = []
-
-# chrome 창 option
-options = webdriver.ChromeOptions()
-options.add_argument('window-size=1920,1080')
-
-# chrome driver를 이용하여 접근 
-driver = webdriver.Chrome('chromedriver.exe', options=options)
-driver.get(url='https://schoolbus.ssif.or.kr/sb/index.html')
-time.sleep(2)
-
-# 메인 화면으로 이동 
-tabs = driver.window_handles
-driver.switch_to.window(tabs[0])
-
-# xpath를 이용하여 통학버스 정보조회 -> 조회 -> 맨끝으로 가서 페이지가 몇개인지 확인 
-driver.find_element(By.XPATH, '//*[@id="headerWr"]/div[2]/div/ul/li[2]').click()
-
-# 조회 페이지
-time.sleep(2)
-driver.find_element(By.XPATH, '//*[@id="viewList"]').click()
-
-time.sleep(2)
-driver.find_element(By.XPATH,'//*[@id="paging_content"]/a[14]').click()
-
-# 페이지 개수 확인
-time.sleep(2)
-
-# 페이지 a 개수 확인
-content = driver.find_elements(By.CSS_SELECTOR, 'a.pageNumBtn') # 리스트로 받고 len으로 추출
-print(len(content))
-
-
-
-
-
-
-
-
-
-
-
-
-
-###############################
-
-
-
-
-
 # 실행용
 
 # 컬럼별 리스트 
+nextNumList = []
 agencyList = []
 regionList = []
 agencyNameList = []
@@ -86,80 +27,174 @@ driver.switch_to.window(tabs[0])
 # xpath를 이용하여 통학버스 정보조회 -> 조회 -> 맨끝으로 가서 페이지가 몇개인지 확인 
 driver.find_element(By.XPATH, '//*[@id="headerWr"]/div[2]/div/ul/li[2]').click()
 
-# 조회 페이지
-time.sleep(2)
+# 관할지역 선택 
+time.sleep(1)
+driver.find_element(By.XPATH, '//*[@id="place"]/option[17]').click()
 driver.find_element(By.XPATH, '//*[@id="viewList"]').click()
-
-# 맨끝 버튼 
-time.sleep(3)
+    
+# 마지막 페이지 클릭
+time.sleep(1)
 driver.find_element(By.XPATH,'//*[@id="paging_content"]/a[14]').click()
 
 # 페이지 개수 확인
-time.sleep(2)
-lastNum = driver.find_element(By.XPATH,'//*[@id="paging_content"]')
-lastNum = list(lastNum.text)
-print(lastNum)
-lastNum = (lastNum[-4]+lastNum[-3]+lastNum[-2]+lastNum[-1])
-lastNum = len(lastNum)
-print(lastNum)
-# 조회 페이지
+time.sleep(1)
+content = driver.find_elements(By.CSS_SELECTOR, 'a.pageNumBtn') # 리스트로 받고 len으로 추출
+lastPageNum = int(content[-1].text)
+lastPageNum = (lastPageNum // 10) + 1
+print(lastPageNum)
+
+# 조회 화면으로 이동
 driver.find_element(By.XPATH, '//*[@id="viewList"]').click()
 
-for i in range(1, lastNum):
-    for i in range (1, 10) :
-            time.sleep(2)
-            driver.find_element(By.XPATH, '//*[@id="searh_list_table"]/table/tbody/tr[{}]/td[1]'.format(i)).click()
-
-            # 수집 정보  
-            time.sleep(2)
-            agency = driver.find_element(By.XPATH, '//*[@id="detailTable"]/tr[1]/td[2]'.format(i)).text
-            region = driver.find_element(By.XPATH, '//*[@id="detailTable"]/tr[2]/td[4]'.format(i)).text
-            agencyName = driver.find_element(By.XPATH, '//*[@id="detailTable"]/tr[3]/td[2]'.format(i)).text
-
-             # 차량정보 같은경우 2개 이상일 경우도 생각하여 for문을 다시 돌림
-            carList = driver.find_element(By.XPATH, '//*[@id="sub_content"]/div[2]/table/tbody')
-            rows = carList.find_elements(By.XPATH,'.//tr')
-            rows)
-            num_rows = len(rows)
-
-            # 차량정보 값  가져오기
-            for n in range(1, num_rows+1) :
-                carRegist = driver.find_element(By.XPATH, '//*[@id="sub_content"]/div[2]/table/tbody/tr[{}]/td[1]'.format(n)).text
-                carType = driver.find_element(By.XPATH, '//*[@id="sub_content"]/div[2]/table/tbody/tr[{}]/td[2]'.format(n)).text
-                carYear = driver.find_element(By.XPATH, '//*[@id="detailbusInfoList"]/tr[{}]/td[3]'.format(n)).text
-                carCapacity = driver.find_element(By.XPATH, '//*[@id="detailbusInfoList"]/tr[{}]/td[4]'.format(n)).text
-                carName = driver.find_element(By.XPATH, '//*[@id="detailbusInfoList"]/tr[{}]/td[6]'.format(n)).text
-            
-            # 데이터  저장
-            agencyList.append(agency)
-            regionList.append(region)
-            agencyNameList.append(agencyName)
-            carRegistList.append(carRegist)
-            carTypeList.append(carType)
-            carYearList.append(carYear)
-            carCapacityList.append(carCapacity)
-            carNameList.append(carName)
-            
-            print(agencyList)
-            
-            # 다시 조회페이지로 가서 반복
-            driver.find_element(By.XPATH, '//*[@id="viewList"]').click()
-    
+# 페이지 개수만큼 넘기기 
+for d in range (1, lastPageNum):
+    # 10개 돌린 후 다음 페이지 숫자를 받아 for문 돌리기
     time.sleep(2)
-    driver.find_element(By.XPATH, '//*[@id="paging_content"]/a[13]').click()
+    nextNum = driver.find_element(By.XPATH, '//*[@id="paging_content"]')
+    nextNum = nextNum.find_elements(By.CSS_SELECTOR, 'a.pageNumBtn')
+    forNextLoop= len(nextNum)
+    print(forNextLoop)
+    for row in nextNum:
+        value = int(row.text)
+        nextNumList.append(value)
+    for c in range (1, forNextLoop):
+        for b in nextNumList:
+            # 1번일때
+            if b == 1 :
+                for a in range (1, 11): # 한 페이지안에서 데이터 수집 10번
+                    time.sleep(2)
+                    driver.find_element(By.XPATH, '//*[@id="searh_list_table"]/table/tbody/tr[{}]/td[1]'.format(a)).click()
 
+                    # 수집 정보  
+                    time.sleep(2)
+                    agency = driver.find_element(By.XPATH, '//*[@id="detailTable"]/tr[1]/td[2]'.format(a)).text
+                    region = driver.find_element(By.XPATH, '//*[@id="detailTable"]/tr[2]/td[4]'.format(a)).text
+                    agencyName = driver.find_element(By.XPATH, '//*[@id="detailTable"]/tr[3]/td[2]'.format(a)).text
 
-##########################
+                     # 차량정보 같은경우 2개 이상일 경우도 생각하여 for문을 다시 돌림
+                    carList = driver.find_element(By.XPATH, '//*[@id="sub_content"]/div[2]/table/tbody')
+                    rows = carList.find_elements(By.XPATH,'.//tr')
+                    num_rows = len(rows)
 
+                    # 차량정보 값  가져오기
+                    for n in range(1, num_rows+1) :
+                        carRegist = driver.find_element(By.XPATH, '//*[@id="sub_content"]/div[2]/table/tbody/tr[{}]/td[1]'.format(n)).text
+                        carType = driver.find_element(By.XPATH, '//*[@id="sub_content"]/div[2]/table/tbody/tr[{}]/td[2]'.format(n)).text
+                        carYear = driver.find_element(By.XPATH, '//*[@id="detailbusInfoList"]/tr[{}]/td[3]'.format(n)).text
+                        carCapacity = driver.find_element(By.XPATH, '//*[@id="detailbusInfoList"]/tr[{}]/td[4]'.format(n)).text
+                        carName = driver.find_element(By.XPATH, '//*[@id="detailbusInfoList"]/tr[{}]/td[6]'.format(n)).text
 
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from webdriver_manager.chrome import ChromeDriverManager
-from bs4 import BeautifulSoup
-from urllib.request import urlopen
-import requests
-import time
-import pandas as pd
+                        # 데이터  저장
+                        agencyList.append(agency)
+                        regionList.append(region)
+                        agencyNameList.append(agencyName)
+                        carRegistList.append(carRegist)
+                        carTypeList.append(carType)
+                        carYearList.append(carYear)
+                        carCapacityList.append(carCapacity)
+                        carNameList.append(carName)
+                    print(agencyList)
 
+                    # 다시 조회페이지로 가서 반복
+                    driver.find_element(By.XPATH, '//*[@id="viewList"]').click()
 
+            # 1번이 아닐때
+            if 1 < b < 11:    
+                print(b)
+                for a in range (1, 11): # 한 페이지안에서 데이터 수집 10번
+                    time.sleep(2)
+                    driver.find_element(By.XPATH, '//*[@id="pageNum{}"]'.format(b)).click()
+                    print(b)
+
+                    time.sleep(2)
+                    driver.find_element(By.XPATH, '//*[@id="searh_list_table"]/table/tbody/tr[{}]/td[1]'.format(a)).click()                 
+
+                    # 수집 정보  
+                    time.sleep(2)
+                    agency = driver.find_element(By.XPATH, '//*[@id="detailTable"]/tr[1]/td[2]').text
+                    region = driver.find_element(By.XPATH, '//*[@id="detailTable"]/tr[2]/td[4]').text
+                    agencyName = driver.find_element(By.XPATH, '//*[@id="detailTable"]/tr[3]/td[2]').text
+
+                     # 차량정보 같은경우 2개 이상일 경우도 생각하여 for문을 다시 돌림
+                    carList = driver.find_element(By.XPATH, '//*[@id="sub_content"]/div[2]/table/tbody')
+                    rows = carList.find_elements(By.XPATH,'.//tr')
+                    num_rows = len(rows)
+
+                    # 차량정보 값  가져오기
+                    for n in range(1, num_rows+1) :
+                        carRegist = driver.find_element(By.XPATH, '//*[@id="sub_content"]/div[2]/table/tbody/tr[{}]/td[1]'.format(n)).text
+                        carType = driver.find_element(By.XPATH, '//*[@id="sub_content"]/div[2]/table/tbody/tr[{}]/td[2]'.format(n)).text
+                        carYear = driver.find_element(By.XPATH, '//*[@id="detailbusInfoList"]/tr[{}]/td[3]'.format(n)).text
+                        carCapacity = driver.find_element(By.XPATH, '//*[@id="detailbusInfoList"]/tr[{}]/td[4]'.format(n)).text
+                        carName = driver.find_element(By.XPATH, '//*[@id="detailbusInfoList"]/tr[{}]/td[6]'.format(n)).text
+
+                        # 데이터  저장
+                        agencyList.append(agency)
+                        regionList.append(region)
+                        agencyNameList.append(agencyName)
+                        carRegistList.append(carRegist)
+                        carTypeList.append(carType)
+                        carYearList.append(carYear)
+                        carCapacityList.append(carCapacity)
+                        carNameList.append(carName)
+                    print(agencyList)
+
+                    # 다시 조회페이지로 가서 반복
+                    driver.find_element(By.XPATH, '//*[@id="viewList"]').click()
+                    
+            # 10을 넘어갔을 때
+            if b > 10:
+                time.sleep(2)
+                print(b)
+                # 그 페이지의 마지막 수 찾기
+                content2 = driver.find_elements(By.CSS_SELECTOR, 'a.pageNumBtn') # 리스트로 받고 len으로 추출
+                lastNum = int(content2[-1].text)
+                print(lastNum)
+                lastNumClick = ( lastNum // 10 ) + 1
+                print(lastNumClick)
+                
+                for a in range (1, 11): # 한 페이지안에서 데이터 수집 10번    
+                    for m in range(1, lastNumClick):
+                        time.sleep(2)
+                        
+                        driver.find_element(By.XPATH, '//*[@id="pageNum{}"]'.format(lastNum)).click()
+                        time.sleep(2)
+
+                        driver.find_element(By.XPATH, '//*[@id="pageNum{}"]'.format(b)).click()
+                        print(b)
+
+                        time.sleep(2)
+                        driver.find_element(By.XPATH, '//*[@id="searh_list_table"]/table/tbody/tr[{}]/td[1]'.format(a)).click()                 
+
+                        # 수집 정보  
+                        time.sleep(2)
+                        agency = driver.find_element(By.XPATH, '//*[@id="detailTable"]/tr[1]/td[2]').text
+                        region = driver.find_element(By.XPATH, '//*[@id="detailTable"]/tr[2]/td[4]').text
+                        agencyName = driver.find_element(By.XPATH, '//*[@id="detailTable"]/tr[3]/td[2]').text
+
+                         # 차량정보 같은경우 2개 이상일 경우도 생각하여 for문을 다시 돌림
+                        carList = driver.find_element(By.XPATH, '//*[@id="sub_content"]/div[2]/table/tbody')
+                        rows = carList.find_elements(By.XPATH,'.//tr')
+                        num_rows = len(rows)
+
+                        # 차량정보 값  가져오기
+                        for n in range(1, num_rows+1) :
+                            carRegist = driver.find_element(By.XPATH, '//*[@id="sub_content"]/div[2]/table/tbody/tr[{}]/td[1]'.format(n)).text
+                            carType = driver.find_element(By.XPATH, '//*[@id="sub_content"]/div[2]/table/tbody/tr[{}]/td[2]'.format(n)).text
+                            carYear = driver.find_element(By.XPATH, '//*[@id="detailbusInfoList"]/tr[{}]/td[3]'.format(n)).text
+                            carCapacity = driver.find_element(By.XPATH, '//*[@id="detailbusInfoList"]/tr[{}]/td[4]'.format(n)).text
+                            carName = driver.find_element(By.XPATH, '//*[@id="detailbusInfoList"]/tr[{}]/td[6]'.format(n)).text
+
+                            # 데이터  저장
+                            agencyList.append(agency)
+                            regionList.append(region)
+                            agencyNameList.append(agencyName)
+                            carRegistList.append(carRegist)
+                            carTypeList.append(carType)
+                            carYearList.append(carYear)
+                            carCapacityList.append(carCapacity)
+                            carNameList.append(carName)
+                        print(agencyList)
+
+                        # 다시 조회페이지로 가서 반복
+                        driver.find_element(By.XPATH, '//*[@id="viewList"]').click()
